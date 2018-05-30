@@ -115,35 +115,26 @@ class HTTPD(object):
                         conn, address = r.accept()
                         conn.setblocking(0)
                         inputs.append(conn)
-                        messages[conn] = Queue.Queue()
+                        messages[conn] = ''
                     else:
                         data = self.read_data(r)
                         if data:
                             logger.info('Получение данных из %s', r.getpeername())
-                            messages[r].put(data)
+                            messages[r] = data
                             if r not in outputs:
                                 outputs.append(r)
-                        else:
-                            logger.error('Отсутствуют данные в %s. Закрытие.', r.getpeername())
-                            if r in outputs:
-                                outputs.remove(r)
+                        if r in inputs:
                             inputs.remove(r)
-                            r.close()
-                            del messages[r]
 
                 for w in writable:
+                    logging.info('Седущее сообщение %s', messages[w].replace('\r\n', ' '))
+                    revert_message = self.parse_message(messages[w])
+                    logger.info("Отправка обратного сообщения %s", revert_message.replace('\r\n', ' '))
                     try:
-                        next_message = messages[w].get_nowait()
-                    except Queue.Empty:
-                        logger.error("Очередь сообщений для %s пуста", w.getpeername())
-                        outputs.remove(w)
-                    except Exception as e:
-                        logger.exception(str(e))
-                    else:
-                        logging.info('Седущее сообщение %s', next_message.replace('\r\n', ' '))
-                        revert_message = self.parse_message(next_message)
-                        logger.info("Отправка обратного сообщения %s", revert_message.replace('\r\n', ' '))
                         w.sendall(revert_message)
+                    finally:
+                        w.close()
+                        outputs.remove(w)
 
                 for e in exceptional:
                     logger.exception('handling exceptional condition for %s', e.getpeername())
@@ -283,7 +274,7 @@ class HTTPD(object):
         headers['Content-Type'] = type_data
         headers['Date'] = time.strftime('%H:%M:%S %d.%m.%Y')
 
-        headers_str = '\r\n'.join(['{}: {}'.format(key, headers[key]) for key in headers.iterkeys()])
+        headers_str = '\r\n'.join(['{}: {}'.format(key, headers[key]) for key in headers.keys()])
         headers_str = status_line + headers_str + '\r\n\r\n'
         return headers_str.encode('utf-8')
 
@@ -324,7 +315,7 @@ class HTTPD(object):
         else:
             data = b'Not Found'
             content_type = 'text/plain'
-            status = '404 Not Found'
+            status = '404 Not Found' if os.path.basename(source) != 'index.html' else '403 Forbidden'
         return status, data, content_type
 
     def __call__(self, *args, **kwargs):
